@@ -23,9 +23,9 @@ class EnergyChartsClient:
         self.session.mount("https://", adapter)
         self.session.mount("http://", adapter)
 
-    def fetch_power_generation_data(
+    def fetch_renewable_power_generation_data(
             self, 
-            country: str = "de", 
+            country: str = "be", 
             start: str = "", 
             end: str = "", 
             subtype: str = ""
@@ -33,7 +33,7 @@ class EnergyChartsClient:
         """Fetches solar and wind generation data for a given country and timeframe.
 
             Args:
-                country: Country code (e.g., 'be', 'de', 'fr'). Defaults to 'de'
+                country: Country code (e.g., 'be', 'de', 'fr'). Defaults to 'be'
                 start: Start date  (e.g., '2026-01-01')
                 end: End date or timestamp.
                 subtype: Optional sub-category filter (e.g., 'solarlog')
@@ -50,6 +50,41 @@ class EnergyChartsClient:
         raw_data = self._make_api_request(endpoint, params)
         df = self._transform_to_dataframe(raw_data)
         return df
+
+    def fetch_long_term_data(self, start: str, end: str, country: str = "de") -> pd.DataFrame:
+            start_dt = pd.to_datetime(start)
+            end_dt = pd.to_datetime(end)
+            
+            current_start = start_dt
+            all_chunks = [] 
+
+            while current_start < end_dt: 
+                current_end = min(current_start + pd.DateOffset(months=1), end_dt)
+                
+                str_start = current_start.strftime("%Y-%m-%d")
+                str_end = current_end.strftime("%Y-%m-%d")
+                
+                logger.info(f"Downloading chunk: {str_start} to {str_end}...")
+                
+                chunk_df = self.fetch_power_generation_data(
+                    country=country, 
+                    start=str_start, 
+                    end=str_end
+                )
+                
+                if not chunk_df.empty:
+                    all_chunks.append(chunk_df)
+                    
+                current_start = current_end 
+                
+            if not all_chunks:
+                logger.warning("No data returned for the entire time range.")
+                return pd.DataFrame()
+                
+            master_df = pd.concat(all_chunks, ignore_index=True)
+            master_df = master_df.sort_values("timestamp").drop_duplicates(subset=["timestamp"])
+            
+            return master_df
 
     def _make_api_request(self, endpoint: str, params: dict) -> dict:
         """Makes a GET request to the specified API endpoint with given parameters.
