@@ -1,6 +1,8 @@
 import logging
 import requests
+from requests.adapters import HTTPAdapter
 import pandas as pd
+from urllib3 import Retry
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +13,15 @@ class EnergyChartsClient:
 
     def __init__(self):
         self.session = requests.Session()
+
+        retries = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504]
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
 
     def fetch_power_generation_data(
             self, 
@@ -34,11 +45,11 @@ class EnergyChartsClient:
                 requests.exceptions.RequestException: If the HTTP request fails or 
                     the API returns a non-200 status code.
             """
-        pass # TODO
-
-    def _build_params(self, country: str, start: str, end: str, subtype: str) -> dict:
-        """Cleans and filters out empty parameters"""
-        pass # TODO
+        endpoint = f"{self.BASE_URL}/public_power"
+        params = {"country": country, "start": start, "end": end, "subtype": subtype}
+        raw_data = self._make_api_request(endpoint, params)
+        df = self._transform_to_dataframe(raw_data)
+        return df
 
     def _make_api_request(self, endpoint: str, params: dict) -> dict:
         """Makes a GET request to the specified API endpoint with given parameters.
@@ -54,7 +65,16 @@ class EnergyChartsClient:
                 requests.exceptions.RequestException: If the HTTP request fails or 
                     the API returns a non-200 status code.
         """
-        pass # TODO
+        url = f"{self.BASE_URL}{endpoint}"
+        logger.info(f"Requesting URL: {url} with params: {params}")
+
+        try:
+            response = self.session.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API request failed: {e}")
+            raise
 
 
 
@@ -67,4 +87,26 @@ class EnergyChartsClient:
             Returns:
                 A pandas DataFrame with timestamps and generation values in MW.
         """
-        pass # TODO
+        records = raw_data.get("data", [])
+        if not records:
+            logger.warning("API returned no data records.")
+            return pd.DataFrame()
+
+        rows = []
+        for entry in records:
+            timestamp = entry.get("timestamp")
+            values = entry.get("values", {})
+
+            rows.append({
+                "timestamp": timestamp,
+                "solar": values.get("solar"),
+                "wind_onshore": values.get("wind_onshore"),
+                "wind_offshore": values.get("wind_offshore"),
+            })
+
+        df = pd.DataFrame(rows)
+
+        if not df.empty and "timestamp" in df.columns:
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+
+        return df
