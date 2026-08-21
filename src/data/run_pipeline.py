@@ -10,8 +10,12 @@ from pathlib import Path
 from src.data.extractors import EnergyChartsClient, OpenMeteoClient
 from src.data.transformers import EnergyDataTransformer, WeatherDataTransformer
 
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO, 
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger("Orchestrator")
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -47,9 +51,9 @@ def run_historical_training_pipeline(start_date: str, end_date: str, lat: float,
     clean_weather_df = WeatherDataTransformer.transform(raw_weather)
     weather_csv_path = os.path.join(INTERIM_DIR, "clean_historical_weather.csv")
     clean_weather_df.to_csv(weather_csv_path, index=False)
-    logger.info(f"Saved clean weather data to {weather_csv_path}")
+    logger.info(f"Saved clean weather data ({len(clean_weather_df)} rows, {len(clean_weather_df.columns)} cols) to {weather_csv_path}")
 
-    # 2. --- PROCESS ENERGY DATA (With Chunking!) ---
+    # 2. --- PROCESS ENERGY DATA (With Chunking) ---
     logger.info("Extracting Historical Energy Data...")
     start_dt = pd.to_datetime(start_date)
     end_dt = pd.to_datetime(end_date)
@@ -81,10 +85,8 @@ def run_historical_training_pipeline(start_date: str, end_date: str, lat: float,
         
         energy_csv_path = os.path.join(INTERIM_DIR, "clean_historical_energy.csv")
         clean_energy_df.to_csv(energy_csv_path, index=False)
-        logger.info(f"Saved clean energy data to {energy_csv_path}")
-        
-        # The ultimate ML dataset: Joining Weather and Power together!
-        # Both datasets use UTC and the column name "timestamp"
+        logger.info(f"Saved clean energy data ({len(clean_energy_df)} rows, {len(clean_energy_df.columns)} cols) to {energy_csv_path}")        
+
         master_df = pd.merge(clean_energy_df, clean_weather_df, on="timestamp", how="inner")
         
         master_csv_path = os.path.join(PROCESSED_DIR, "ml_training_dataset.csv")
