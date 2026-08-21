@@ -39,8 +39,35 @@ class OpenMeteoClient:
             "timezone": "auto"
         }
 
-        # Returns the raw dictionary, stops here.
         return self._make_api_request(self.ARCHIVE_BASE_URL, endpoint, params)
+
+    def fetch_forecast_weather(self, lat: float, lon: float, forecast_days: int = 3) -> dict:
+        """
+        Fetches live forecast data and returns raw JSON.
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            forecast_days: How many days into the future to predict (default 3)
+        """
+        endpoint = "/v1/forecast"
+        
+        variables = [
+            "shortwave_radiation", 
+            "direct_normal_irradiance", 
+            "wind_speed_10m", 
+            "wind_speed_100m"
+        ]
+        
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": ",".join(variables),
+            "forecast_days": forecast_days,
+            "timezone": "auto"
+        }
+
+        return self._make_api_request(self.FORECAST_BASE_URL, endpoint, params)
 
     def _make_api_request(self, base_url: str, endpoint: str, params: dict) -> dict:
         url = f"{base_url}{endpoint}"

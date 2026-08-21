@@ -1,7 +1,6 @@
 import logging
 import requests
 from requests.adapters import HTTPAdapter
-import pandas as pd
 from urllib3 import Retry
 
 logger = logging.getLogger(__name__)
