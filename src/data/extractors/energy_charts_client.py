@@ -24,7 +24,7 @@ class EnergyChartsClient:
             self, country: str = "be", start: str = "", end: str = "", subtype: str = ""
         ) -> dict:
         """Fetches solar and wind generation data and returns raw JSON."""
-        endpoint = f"{self.BASE_URL}/public_power"
+        endpoint = "/v2/public_power"
         
         # Clean empty params
         raw_params = {"country": country, "start": start, "end": end, "subtype": subtype}
