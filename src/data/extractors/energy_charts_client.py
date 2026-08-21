@@ -21,7 +21,6 @@ class EnergyChartsClient:
         )
         adapter = HTTPAdapter(max_retries=retries)
         self.session.mount("https://", adapter)
-        self.session.mount("http://", adapter)
 
     def fetch_renewable_power_generation_data(
             self, 
