@@ -15,12 +15,16 @@ RAW_DIR = PROJECT_ROOT / "data" / "01_raw"
 INTERIM_DIR = PROJECT_ROOT / "data" / "02_interim"
 PROCESSED_DIR = PROJECT_ROOT / "data" / "03_processed"
 
+ANCHOR_LATS = [51.55, 51.25, 50.85, 50.25]
+ANCHOR_LONS = [2.90, 3.20, 4.35, 5.50]
+LOCATION_TAGS = ["north_sea", "coast", "flanders", "wallonia"]
 
-def fetch_and_clean_weather(start_date: str, end_date: str, lat: float, lon: float) -> pd.DataFrame:
+
+def fetch_and_clean_weather(start_date: str, end_date: str, lats: list[float], lons: list[float]) -> pd.DataFrame:
     """Fetches and cleans historical weather data."""
     logger.info("1/3 Fetching weather data...")
-    raw = OpenMeteoClient().fetch_historical_weather(lat, lon, start_date, end_date)
-    return WeatherDataTransformer.transform(raw)
+    raw = OpenMeteoClient().fetch_historical_weather(lats, lons, start_date, end_date)
+    return WeatherDataTransformer.transform(raw, LOCATION_TAGS)
 
 
 def fetch_and_clean_energy(start_date: str, end_date: str, country: str = "be") -> pd.DataFrame:
@@ -49,12 +53,12 @@ def fetch_and_clean_energy(start_date: str, end_date: str, country: str = "be") 
     return df
 
 
-def run_training_pipeline(start_date: str, end_date: str, lat: float, lon: float) -> None:
+def run_training_pipeline(start_date: str, end_date: str, lats: list[float], lons: list[float]) -> None:
     """Extracts historical data, merges it, and saves locally + to database."""
     logger.info(f"=== Starting Training Data Pipeline ({start_date} to {end_date}) ===")
 
     # 1. Extract & Transform
-    weather_df = fetch_and_clean_weather(start_date, end_date, lat, lon)
+    weather_df = fetch_and_clean_weather(start_date, end_date, lats, lons)
     energy_df = fetch_and_clean_energy(start_date, end_date)
 
     # 2. Merge (Hourly UTC alignment)
@@ -70,11 +74,11 @@ def run_training_pipeline(start_date: str, end_date: str, lat: float, lon: float
     PostgresLoader().load(master_df, table_name="historical_training", if_exists="replace")
 
 
-def run_inference_pipeline(lat: float, lon: float) -> None:
+def run_inference_pipeline(lats: List[float], lons: List[float]) -> None:
     """Fetches current forecast and saves for model prediction."""
     logger.info("=== Starting Daily Forecast Pipeline ===")
 
-    raw_forecast = OpenMeteoClient().fetch_forecast_weather(lat, lon, forecast_days=3)
+    raw_forecast = OpenMeteoClient().fetch_forecast_weather(lats, lons, forecast_days=3)
     forecast_df = WeatherDataTransformer.transform(raw_forecast)
 
     # Save locally and push to database
@@ -93,8 +97,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mode", choices=["train", "inference", "load_only"], required=True)
     parser.add_argument("--start", type=str, help="Start date (YYYY-MM-DD)")
     parser.add_argument("--end", type=str, help="End date (YYYY-MM-DD)")
-    parser.add_argument("--lat", type=float, default=51.0)
-    parser.add_argument("--lon", type=float, default=4.30)
     return parser.parse_args()
 
 
@@ -109,10 +111,10 @@ def main() -> None:
     if args.mode == "train":
         if not args.start or not args.end:
             raise ValueError("Training mode requires both --start and --end dates.")
-        run_training_pipeline(args.start, args.end, args.lat, args.lon)
+        run_training_pipeline(args.start, args.end, ANCHOR_LATS, ANCHOR_LONS)
 
     elif args.mode == "inference":
-        run_inference_pipeline(args.lat, args.lon)
+        run_inference_pipeline(ANCHOR_LATS, ANCHOR_LONS)
 
     elif args.mode == "load_only":
         csv_path = PROCESSED_DIR / "ml_training_dataset.csv"
