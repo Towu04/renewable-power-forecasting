@@ -2,7 +2,7 @@ import pytest
 import requests
 from unittest.mock import patch, MagicMock
 
-from src.data.extractors.energy_charts_client import EnergyChartsClient, APIValidationError
+from src.data.extractors.energy_charts_client import EnergyChartsClient, EnergyChartsValidationError
 
 # ==========================================
 # FIXTURES
@@ -66,7 +66,7 @@ class TestParameterValidation:
     @patch.object(requests.Session, 'get')
     def test_blocks_invalid_enum_value(self, mock_get, client):
         """Behavior: Fails fast locally if a parameter is not in the allowed list."""
-        with pytest.raises(APIValidationError) as exc_info:
+        with pytest.raises(EnergyChartsValidationError) as exc_info:
             client.fetch_installed_power(country="us") # "us" is not in our mock schema
             
         assert "'us' is not a valid 'country'" in str(exc_info.value)
@@ -75,7 +75,7 @@ class TestParameterValidation:
     @patch.object(requests.Session, 'get')
     def test_blocks_missing_required_parameter(self, mock_get, client):
         """Behavior: Fails fast locally if a strictly required parameter is absent."""
-        with pytest.raises(APIValidationError) as exc_info:
+        with pytest.raises(EnergyChartsValidationError) as exc_info:
             # Manually triggering the internal method to simulate missing 'country'
             client._make_api_request("/v2/installed_power", {"time_step": "yearly"})
             
@@ -130,4 +130,4 @@ class TestNetworkResilience:
         mock_get.return_value = mock_response
 
         with pytest.raises(requests.exceptions.HTTPError):
-            client.fetch_installed_power(country="be")      
+            client.fetch_installed_power(country="be")
