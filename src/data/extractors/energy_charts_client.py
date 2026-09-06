@@ -100,14 +100,15 @@ class EnergyChartsClient:
                         f"Allowed values: {allowed_values}"
                     )
 
-    def _make_api_request(self, endpoint: str, params: dict) -> dict:
-        self._validate_params(endpoint, params)
+    def _make_api_request(self, endpoint: str, params: dict, validate: bool = True) -> dict:
+        if validate:
+            self._validate_params(endpoint, params)
         
         url = f"{self.BASE_URL}{endpoint}"
         logger.info(f"Requesting URL: {url} with params: {params}")
         
         try:
-            response = self.session.get(url, params=params, timeout=10)
+            response = self.session.get(url, params=params, timeout=self.DEFAULT_TIMEOUT)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
