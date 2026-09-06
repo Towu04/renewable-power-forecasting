@@ -17,3 +17,7 @@ train:
 inference:
 	@echo "Fetching tomorrow's forecast for ML inference..."
 	python -m src.data.run_pipeline --mode inference
+
+test:
+	@echo "Running tests..."
+	python -m pytest
