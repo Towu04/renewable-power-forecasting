@@ -24,11 +24,19 @@ class OpenMeteoClient:
     DEFAULT_TIMEOUT = 15
 
     DEFAULT_HOURLY_VARIABLES: List[str] = [
-        "temperature_2m",
-        "shortwave_radiation", 
-        "direct_normal_irradiance", 
-        "wind_speed_10m", 
-        "wind_speed_100m"
+        # --- Solar Features ---
+        "temperature_2m",              
+        "shortwave_radiation",         
+        "direct_normal_irradiance",    
+        "diffuse_radiation",           
+        "cloud_cover",                
+        
+        # --- Wind Features ---
+        "wind_speed_10m",             
+        "wind_speed_100m",             
+        "wind_direction_100m",         
+        "wind_gusts_10m",              
+        "surface_pressure"            
     ]
 
     _DATE_REGEX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
