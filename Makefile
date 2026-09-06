@@ -15,6 +15,18 @@ clean:
 	find . -type f -name "*.pyc" -delete
 	@echo "Cleaned up all cache files!"
 
+# --- Combined Pipeline Commands ---
+
+train:
+	@echo "Starting full historical data pipeline (Extract & Load)..."
+	python -m $(MODULE) --mode train --step run-all --start $(START_DATE) --end $(END_DATE)
+
+inference:
+	@echo "Fetching $(FORECAST_DAYS)-day forecast for ML inference..."
+	python -m $(MODULE) --mode inference --step run-all --forecast-days $(FORECAST_DAYS)
+
+# --- Decoupled Commands ---
+
 extract-train:
 	@echo "Extracting historical data only..."
 	python -m $(MODULE) --mode train --step extract --start $(START_DATE) --end $(END_DATE)
