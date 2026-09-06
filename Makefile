@@ -1,4 +1,9 @@
-.PHONY: setup clean run
+START_DATE ?= 2025-01-01
+END_DATE ?= 2026-01-01
+FORECAST_DAYS ?= 3
+MODULE ?= src.data.run_pipeline
+
+.PHONY: setup clean train inference test extract-train load-train extract-inference load-inference
 
 setup:
 	pip install --upgrade pip
@@ -10,13 +15,23 @@ clean:
 	find . -type f -name "*.pyc" -delete
 	@echo "Cleaned up all cache files!"
 
-train:
-	@echo "Starting historical data extraction..."
-	python -m src.data.run_pipeline --mode train --start 2025-01-01 --end 2026-01-01
+extract-train:
+	@echo "Extracting historical data only..."
+	python -m $(MODULE) --mode train --step extract --start $(START_DATE) --end $(END_DATE)
 
-inference:
-	@echo "Fetching tomorrow's forecast for ML inference..."
-	python -m src.data.run_pipeline --mode inference
+load-train:
+	@echo "Loading staged historical data to Postgres..."
+	python -m $(MODULE) --mode train --step load
+
+extract-inference:
+	@echo "Extracting $(FORECAST_DAYS)-day forecast only..."
+	python -m $(MODULE) --mode inference --step extract --forecast-days $(FORECAST_DAYS)
+
+load-inference:
+	@echo "Loading staged forecast data to Postgres..."
+	python -m $(MODULE) --mode inference --step load
+
+# --- Testing ---
 
 test:
 	@echo "Running tests..."
