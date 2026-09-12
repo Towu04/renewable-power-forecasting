@@ -1,0 +1,12 @@
+# --- Data Manipulation & Extraction ---
+requests>=2.31.0       # HTTP library for API clients
+pandas>=2.1.0          # DataFrames and time-series manipulation
+pyarrow>=14.0.0        # Required by Pandas to read/write .parquet files
+
+# --- Database Integration ---
+SQLAlchemy>=2.0.0      # Database engine and ORM
+psycopg2-binary>=2.9.9 # PostgreSQL adapter for SQLAlchemy under the hood
+python-dotenv>=1.0.0   # Loads the DATABASE_URL from your .env file
+
+# --- Testing ---
+pytest>=7.4.0          # Test runner

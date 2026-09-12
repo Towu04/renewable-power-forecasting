@@ -1,7 +1,5 @@
 import pytest
-import argparse
 import pandas as pd
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 # Adjust import to match the actual name of your pipeline script
