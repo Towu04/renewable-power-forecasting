@@ -1,6 +1,5 @@
 import pytest
 import pandas as pd
-import logging
 from unittest.mock import patch, call
 
 from src.data.loaders import PostgresLoader 
@@ -109,5 +108,5 @@ class TestPostgresLoaderRetryLogic:
         with pytest.raises(Exception, match="Database is down"):
             loader.load(sample_df, table_name="test_table", retries=3)
             
-        assert mock_to_sql.call_count == 3
+        assert mock_to_sql.call_count == 4 # Initial attempt + 3 retries
         mock_sleep.assert_has_calls([call(2), call(4)])

@@ -58,7 +58,7 @@ class TestTemporalValidation:
 
     def test_blocks_invalid_date_format(self, client):
         """Behavior: API requires strictly YYYY-MM-DD."""
-        with pytest.raises(OpenMeteoValidationError, match="Invalid format for 'start_date'"):
+        with pytest.raises(OpenMeteoValidationError, match="Invalid or impossible date for 'start_date': '01-01-2026'. Expected a valid 'YYYY-MM-DD' calendar date."):
             # Passing DD-MM-YYYY instead of YYYY-MM-DD
             client.fetch_historical_weather(lats=[50.85], lons=[4.35], start_date="01-01-2026", end_date="2026-01-02")
 

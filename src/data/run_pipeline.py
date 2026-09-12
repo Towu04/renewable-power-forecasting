@@ -33,6 +33,9 @@ def extract_and_transform_historical(start_date: str, end_date: str, output_path
         raw_weather = weather_client.fetch_historical_weather(ANCHOR_LATS, ANCHOR_LONS, start_date, end_date)
         weather_df = WeatherDataTransformer.transform(raw_weather, LOCATION_TAGS)
 
+    if weather_df.empty or "timestamp" not in weather_df.columns:
+        raise RuntimeError("Weather data extraction failed. The resulting dataset is empty.")
+
     # 2. Energy Data Extraction
     chunks = []
     start_dt, end_dt = pd.to_datetime(start_date), pd.to_datetime(end_date)
@@ -123,8 +126,8 @@ def main() -> None:
     args = parse_args()
     
     if args.mode == "train":
-        if not args.start or not args.end:
-            raise ValueError("Training mode requires both --start and --end dates.")
+        if args.step in ["extract", "run-all"] and (not args.start or not args.end):
+            raise ValueError("Training mode extraction requires both --start and --end dates.")
         target_file = PROCESSED_DIR / "historical_training.parquet"
         target_table = "historical_training"
     else:

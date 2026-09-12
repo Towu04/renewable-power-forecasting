@@ -24,7 +24,7 @@ class PostgresLoader:
             logger.warning(f"DataFrame for '{table_name}' is empty. Skipping upload.")
             return
 
-        for attempt in range(1, retries + 1):
+        for attempt in range(0, retries + 1):
             try:
                 logger.info(f"Uploading {len(df)} rows to '{table_name}' (attempt {attempt}/{retries})...")
                 df.to_sql(name=table_name, con=self.engine, if_exists=if_exists, index=False, chunksize=1000)
@@ -34,4 +34,4 @@ class PostgresLoader:
                 logger.warning(f"Upload attempt {attempt} failed: {e}")
                 if attempt == retries:
                     raise
-                time.sleep(2 * attempt)
+                time.sleep(2 * (attempt + 1))

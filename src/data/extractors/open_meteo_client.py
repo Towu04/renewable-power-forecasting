@@ -1,5 +1,5 @@
+from datetime import datetime
 import logging
-import re
 from typing import List, Dict, Any, Sequence, Optional
 import requests
 from requests.adapters import HTTPAdapter
@@ -39,8 +39,6 @@ class OpenMeteoClient:
         "surface_pressure"            
     ]
 
-    _DATE_REGEX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
     def __init__(self):
         self.session = requests.Session()
         retries = Retry(
@@ -74,9 +72,11 @@ class OpenMeteoClient:
                 raise OpenMeteoValidationError(f"Invalid longitude {lon}. Must be between -180 and 180.")
 
     def _validate_date(self, date_str: str, field_name: str) -> None:
-        if not self._DATE_REGEX.match(date_str):
+        try:
+            datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
             raise OpenMeteoValidationError(
-                f"Invalid format for '{field_name}': '{date_str}'. Expected 'YYYY-MM-DD'."
+                f"Invalid or impossible date for '{field_name}': '{date_str}'. Expected a valid 'YYYY-MM-DD' calendar date."
             )
 
     def fetch_historical_weather(
@@ -101,7 +101,7 @@ class OpenMeteoClient:
             "start_date": start_date,
             "end_date": end_date,
             "hourly": ",".join(hourly_vars or self.DEFAULT_HOURLY_VARIABLES),
-            "timezone": "auto"
+            "timezone": "UTC"
         }
 
         data = self._make_api_request(self.ARCHIVE_BASE_URL, "/v1/archive", params)
@@ -125,7 +125,7 @@ class OpenMeteoClient:
             "longitude": ",".join(map(str, lons)),
             "hourly": ",".join(hourly_vars or self.DEFAULT_HOURLY_VARIABLES),
             "forecast_days": forecast_days,
-            "timezone": "auto"
+            "timezone": "UTC"
         }
 
         data = self._make_api_request(self.FORECAST_BASE_URL, "/v1/forecast", params)

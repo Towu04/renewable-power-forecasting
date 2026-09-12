@@ -46,6 +46,7 @@ class WeatherDataTransformer:
 
         df = pd.DataFrame(hourly).rename(columns={"time": "timestamp"})
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        df = df.drop_duplicates(subset=["timestamp"])
 
         if total_locations > 1:
             tag = location_tags[index] if location_tags and index < len(location_tags) else f"loc_{index}"
