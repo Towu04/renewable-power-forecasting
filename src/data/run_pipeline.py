@@ -1,6 +1,7 @@
 import argparse
 import logging
 from pathlib import Path
+from typing import List
 import pandas as pd
 
 from src.data.extractors import EnergyChartsClient, OpenMeteoClient
@@ -28,39 +29,20 @@ def extract_and_transform_historical(start_date: str, end_date: str, output_path
     """Extracts historical data from APIs, transforms it, and stages it locally."""
     logger.info(f"=== Extraction Phase: Historical Data ({start_date} to {end_date}) ===")
 
-    # 1. Weather Data Extraction
     with OpenMeteoClient() as weather_client:
-        raw_weather = weather_client.fetch_historical_weather(ANCHOR_LATS, ANCHOR_LONS, start_date, end_date)
-        weather_df = WeatherDataTransformer.transform(raw_weather, LOCATION_TAGS)
+        weather_df = _extract_weather_data(weather_client, start_date, end_date)
 
     if weather_df.empty or "timestamp" not in weather_df.columns:
         raise RuntimeError("Weather data extraction failed. The resulting dataset is empty.")
-
-    # 2. Energy Data Extraction
-    chunks = []
-    start_dt, end_dt = pd.to_datetime(start_date), pd.to_datetime(end_date)
-    current = start_dt
     
     with EnergyChartsClient() as energy_client:
-        while current < end_dt:
-            nxt = min(current + pd.DateOffset(months=1), end_dt)
-            raw_energy = energy_client.fetch_renewable_power_generation_data(
-                country="be",
-                start=current.strftime("%Y-%m-%d"),
-                end=nxt.strftime("%Y-%m-%d"),
-            )
-            df_chunk = EnergyDataTransformer.transform(raw_energy)
-            if not df_chunk.empty:
-                chunks.append(df_chunk)
-            current = nxt
+        energy_df = _extract_energy_data(energy_client, start_date, end_date)
 
-    # 3. Process and Merge
-    energy_df = pd.concat(chunks, ignore_index=True).drop_duplicates(subset=["timestamp"])
-    energy_df = energy_df.set_index("timestamp").resample("1h").mean().reset_index()
+    if energy_df.empty or "timestamp" not in energy_df.columns:
+        raise RuntimeError("Energy data extraction failed. The resulting dataset is empty.")
 
     master_df = pd.merge(energy_df, weather_df, on="timestamp", how="inner")
 
-    # 4. Save to Disk
     master_df.to_parquet(output_path, index=False)
     logger.info(f"Staged historical dataset ({len(master_df)} rows) to {output_path}")
 
@@ -87,6 +69,50 @@ def load_to_database(file_path: Path, table_name: str) -> None:
     df = pd.read_parquet(file_path)
     PostgresLoader().load(df, table_name=table_name, if_exists="replace")
     logger.info("Database load complete.")
+
+# ---------------------------------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------------------------------
+
+def _extract_weather_data(client: OpenMeteoClient, start_date: str, end_date: str) -> pd.DataFrame:
+    chunks = []
+    start_dt, end_dt = pd.to_datetime(start_date), pd.to_datetime(end_date)
+    current = start_dt
+
+    while current < end_dt:
+        nxt = min(current + pd.DateOffset(years=1), end_dt)
+        raw_chunk = client.fetch_historical_weather(ANCHOR_LATS, ANCHOR_LONS, current.strftime("%Y-%m-%d"), nxt.strftime("%Y-%m-%d"))
+        df_chunk = WeatherDataTransformer.transform(raw_chunk, LOCATION_TAGS)
+        if not df_chunk.empty:
+            chunks.append(df_chunk)
+        current = nxt
+
+    weather_df = pd.concat(chunks, ignore_index=True).drop_duplicates(subset=["timestamp"])
+    weather_df = weather_df.set_index("timestamp").resample("1h").mean().reset_index()
+
+    return weather_df
+
+def _extract_energy_data(client: EnergyChartsClient, start_date: str, end_date: str) -> pd.DataFrame:
+    chunks = []
+    start_dt, end_dt = pd.to_datetime(start_date), pd.to_datetime(end_date)
+    current = start_dt
+
+    while current < end_dt:
+        nxt = min(current + pd.DateOffset(years=1), end_dt)
+        raw_chunk = client.fetch_renewable_power_generation_data(
+            country="be",
+            start=current.strftime("%Y-%m-%d"),
+            end=nxt.strftime("%Y-%m-%d"),
+        )
+        df_chunk = EnergyDataTransformer.transform(raw_chunk)
+        if not df_chunk.empty:
+            chunks.append(df_chunk)
+        current = nxt
+
+    energy_df = pd.concat(chunks, ignore_index=True).drop_duplicates(subset=["timestamp"])
+    energy_df = energy_df.set_index("timestamp").resample("1h").mean().reset_index()
+
+    return energy_df
 
 
 # ---------------------------------------------------------------------------
