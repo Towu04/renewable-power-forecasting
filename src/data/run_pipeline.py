@@ -25,7 +25,7 @@ LOCATION_TAGS = ["north_sea", "coast", "flanders", "wallonia"]
 # Core Pipeline Steps
 # ---------------------------------------------------------------------------
 
-def extract_and_transform_historical(start_date: str, end_date: str, output_path: Path) -> None:
+def extract_and_transform_historical(start_date: str, end_date: str, output_dir: Path) -> None:
     """Extracts historical data from APIs, transforms it, and stages it locally."""
     logger.info(f"=== Extraction Phase: Historical Data ({start_date} to {end_date}) ===")
 
@@ -34,20 +34,28 @@ def extract_and_transform_historical(start_date: str, end_date: str, output_path
 
     if weather_df.empty or "timestamp" not in weather_df.columns:
         raise RuntimeError("Weather data extraction failed. The resulting dataset is empty.")
+
+    weather_df.to_parquet(output_dir / "weather.parquet", index=False)
+    logger.info(f"Staged historical dataset ({len(weather_df)} rows) to {output_dir / 'weather.parquet'}")
     
     with EnergyChartsClient() as energy_client:
-        energy_df = _extract_energy_data(energy_client, start_date, end_date)
+        energy_production_df = _extract_energy_production_data(energy_client, start_date, end_date)
+        installed_energy_df = _extract_installed_energy_data(energy_client, start_date, end_date)
 
-    if energy_df.empty or "timestamp" not in energy_df.columns:
-        raise RuntimeError("Energy data extraction failed. The resulting dataset is empty.")
+    if energy_production_df.empty or "timestamp" not in energy_production_df.columns:
+        raise RuntimeError("Energy production data extraction failed. The resulting dataset is empty.")
 
-    master_df = pd.merge(energy_df, weather_df, on="timestamp", how="inner")
+    if installed_energy_df.empty or "timestamp" not in installed_energy_df.columns:
+        raise RuntimeError("Installed energy data extraction failed. The resulting dataset is empty.")
 
-    master_df.to_parquet(output_path, index=False)
-    logger.info(f"Staged historical dataset ({len(master_df)} rows) to {output_path}")
+    energy_production_df.to_parquet(output_dir / "energy_production.parquet", index=False)
+    logger.info(f"Staged energy production dataset ({len(energy_production_df)} rows) to {output_dir / 'energy_production.parquet'}")
+
+    installed_energy_df.to_parquet(output_dir / "installed_energy.parquet", index=False)
+    logger.info(f"Staged installed energy dataset ({len(installed_energy_df)} rows) to {output_dir / 'installed_energy.parquet'}")
 
 
-def extract_and_transform_forecast(output_path: Path, forecast_days: int) -> None:
+def extract_and_transform_forecast(output_dir: Path, forecast_days: int) -> None:
     """Extracts live forecast data and stages it locally."""
     logger.info(f"=== Extraction Phase: {forecast_days}-Day Forecast ===")
 
@@ -55,19 +63,30 @@ def extract_and_transform_forecast(output_path: Path, forecast_days: int) -> Non
         raw_forecast = client.fetch_forecast_weather(ANCHOR_LATS, ANCHOR_LONS, forecast_days=forecast_days)
         forecast_df = WeatherDataTransformer.transform(raw_forecast, LOCATION_TAGS)
 
-    forecast_df.to_parquet(output_path, index=False)
-    logger.info(f"Staged forecast dataset ({len(forecast_df)} rows) to {output_path}")
+    forecast_df.to_parquet(output_dir / "forecast.parquet", index=False)
+    logger.info(f"Staged forecast dataset ({len(forecast_df)} rows) to {output_dir / 'forecast.parquet'}")
 
 
-def load_to_database(file_path: Path, table_name: str) -> None:
-    """Loads a staged Parquet file into the Postgres database."""
-    logger.info(f"=== Loading Phase: {file_path.name} -> {table_name} ===")
+def load_to_database(directory_path: Path) -> None:
+    """Loads all Parquet files from a directory into respective Postgres tables."""
+    logger.info(f"=== Loading Phase: Directory {directory_path} ===")
     
-    if not file_path.exists():
-        raise FileNotFoundError(f"Cannot load data: {file_path} does not exist. Run extraction first.")
+    if not directory_path.exists() or not directory_path.is_dir():
+        raise FileNotFoundError(f"Cannot load data: Directory {directory_path} does not exist.")
 
-    df = pd.read_parquet(file_path)
-    PostgresLoader().load(df, table_name=table_name, if_exists="replace")
+    parquet_files = list(directory_path.glob("*.parquet"))
+    
+    if not parquet_files:
+        logger.warning(f"No parquet files found in {directory_path}.")
+        return
+
+    for file_path in parquet_files:
+        table_name = file_path.stem
+        logger.info(f"Loading {file_path.name} into table '{table_name}'...")
+        
+        df = pd.read_parquet(file_path)
+        PostgresLoader().load(df, table_name=table_name, if_exists="replace")
+        
     logger.info("Database load complete.")
 
 # ---------------------------------------------------------------------------
@@ -92,7 +111,7 @@ def _extract_weather_data(client: OpenMeteoClient, start_date: str, end_date: st
 
     return weather_df
 
-def _extract_energy_data(client: EnergyChartsClient, start_date: str, end_date: str) -> pd.DataFrame:
+def _extract_energy_production_data(client: EnergyChartsClient, start_date: str, end_date: str) -> pd.DataFrame:
     chunks = []
     start_dt, end_dt = pd.to_datetime(start_date), pd.to_datetime(end_date)
     current = start_dt
@@ -109,11 +128,15 @@ def _extract_energy_data(client: EnergyChartsClient, start_date: str, end_date: 
             chunks.append(df_chunk)
         current = nxt
 
-    energy_df = pd.concat(chunks, ignore_index=True).drop_duplicates(subset=["timestamp"])
-    energy_df = energy_df.set_index("timestamp").resample("1h").mean().reset_index()
+    energy_production_df = pd.concat(chunks, ignore_index=True).drop_duplicates(subset=["timestamp"])
+    energy_production_df = energy_production_df.set_index("timestamp").resample("1h").mean().reset_index()
 
-    return energy_df
+    return energy_production_df
 
+def _extract_installed_energy_data(client: EnergyChartsClient, start_date: str, end_date: str) -> pd.DataFrame:
+    raw_data = client.fetch_installed_power(country="be", time_step="yearly")
+    installed_energy_df = EnergyDataTransformer.transform(raw_data)
+    return installed_energy_df
 
 # ---------------------------------------------------------------------------
 # CLI & Orchestration
@@ -146,28 +169,29 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    # 1. Initialize Infrastructure
     for directory in [RAW_DIR, INTERIM_DIR, PROCESSED_DIR]:
         directory.mkdir(parents=True, exist_ok=True)
 
     args = parse_args()
     
-    if args.mode == "train":
-        if args.step in ["extract", "run-all"] and (not args.start or not args.end):
-            raise ValueError("Training mode extraction requires both --start and --end dates.")
-        target_file = PROCESSED_DIR / "historical_training.parquet"
-        target_table = "historical_training"
-    else:
-        target_file = INTERIM_DIR / "current_forecast.parquet"
-        target_table = "daily_forecasts"
+    # 2. Configure Paths & Validate
+    target_dir = PROCESSED_DIR if args.mode == "train" else INTERIM_DIR
 
+    if args.mode == "train" and args.step in ["extract", "run-all"]:
+        if not args.start or not args.end:
+            raise ValueError("Training mode extraction requires both --start and --end dates.")
+
+    # 3. Execute Pipeline Steps
     if args.step in ["extract", "run-all"]:
         if args.mode == "train":
-            extract_and_transform_historical(args.start, args.end, target_file)
+            extract_and_transform_historical(args.start, args.end, target_dir)
         else:
-            extract_and_transform_forecast(target_file, forecast_days=args.forecast_days)
+            extract_and_transform_forecast(target_dir, forecast_days=args.forecast_days)
 
     if args.step in ["load", "run-all"]:
-        load_to_database(target_file, target_table)
+        # Passes the directory; load_to_database will loop through all .parquet files inside
+        load_to_database(target_dir)
 
 
 if __name__ == "__main__":

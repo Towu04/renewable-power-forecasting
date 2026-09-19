@@ -81,26 +81,22 @@ class TestExtractionLogic:
     @patch("src.data.run_pipeline.WeatherDataTransformer.transform")
     def test_extract_forecast(self, mock_weather_transform, mock_meteo_client, tmp_path, mock_weather_df):
         """Behavior: Forecast extraction writes a valid parquet file without hitting APIs."""
-        # Setup Context Manager Mocking: mock_client.__enter__() returns the actual mock instance
         mock_instance = MagicMock()
         mock_meteo_client.return_value.__enter__.return_value = mock_instance
         
-        # Setup Transformer Mocking
         mock_weather_transform.return_value = mock_weather_df
         
-        output_file = tmp_path / "forecast.parquet"
+        output_dir = tmp_path 
         
-        extract_and_transform_forecast(output_file, forecast_days=5)
+        extract_and_transform_forecast(output_dir, forecast_days=5)
         
-        # Verify API client was called properly
         mock_instance.fetch_forecast_weather.assert_called_once()
-        assert mock_instance.fetch_forecast_weather.call_args[1]["forecast_days"] == 5
         
-        # Verify file was written
-        assert output_file.exists()
+        # Verify file was written inside the directory
+        saved_file = output_dir / "forecast.parquet"
+        assert saved_file.exists()
         
-        # Verify file contents
-        saved_df = pd.read_parquet(output_file)
+        saved_df = pd.read_parquet(saved_file)
         assert len(saved_df) == 2
         assert "temperature_2m_flanders" in saved_df.columns
 
@@ -113,27 +109,31 @@ class TestExtractionLogic:
         mock_energy_client, mock_meteo_client, 
         tmp_path, mock_weather_df, mock_energy_df
     ):
-        """Behavior: Historical extraction orchestrates both clients, merges data, and saves."""
-        # Mock Context Managers
+        """Behavior: Historical extraction orchestrates both clients and saves decoupled files."""
         mock_meteo_client.return_value.__enter__.return_value = MagicMock()
-        mock_energy_instance = MagicMock()
-        mock_energy_client.return_value.__enter__.return_value = mock_energy_instance
+        mock_energy_client.return_value.__enter__.return_value = MagicMock()
         
-        # Mock Transformers
         mock_weather_transform.return_value = mock_weather_df
-        mock_energy_transform.return_value = mock_energy_df
         
-        output_file = tmp_path / "historical.parquet"
+        # Since transform is called multiple times, we just mock it to return the dummy df every time
+        mock_energy_transform.return_value = mock_energy_df 
         
-        extract_and_transform_historical("2026-01-01", "2026-01-02", output_file)
+        output_dir = tmp_path
         
-        # Verify Merge & Write
-        assert output_file.exists()
-        saved_df = pd.read_parquet(output_file)
+        extract_and_transform_historical("2026-01-01", "2026-01-02", output_dir)
         
-        # Result should contain columns from BOTH mock DataFrames
-        assert "solar" in saved_df.columns
-        assert "temperature_2m_flanders" in saved_df.columns
+        # Verify multiple decoupled files exist instead of one merged file
+        weather_file = output_dir / "weather.parquet"
+        energy_prod_file = output_dir / "energy_production.parquet"
+        installed_file = output_dir / "installed_energy.parquet"
+        
+        assert weather_file.exists()
+        assert energy_prod_file.exists()
+        assert installed_file.exists()
+        
+        # Verify contents of the decoupled files
+        assert "temperature_2m_flanders" in pd.read_parquet(weather_file).columns
+        assert "solar" in pd.read_parquet(energy_prod_file).columns
 
 
 # ==========================================
@@ -144,30 +144,30 @@ class TestLoadingLogic:
 
     @patch("src.data.run_pipeline.PostgresLoader")
     def test_load_to_database_success(self, mock_loader, tmp_path, mock_weather_df):
-        """Behavior: Loader reads the parquet file and passes it to PostgresLoader."""
-        # Create a real parquet file in the temp directory
-        valid_file = tmp_path / "valid_data.parquet"
+        """Behavior: Loader iterates over a directory of parquet files and loads them."""
+        # Create a real parquet file in the temp directory named "weather.parquet"
+        valid_file = tmp_path / "weather.parquet"
         mock_weather_df.to_parquet(valid_file, index=False)
         
         mock_instance = MagicMock()
         mock_loader.return_value = mock_instance
         
-        load_to_database(valid_file, "target_table")
+        load_to_database(tmp_path)
         
         # Verify the loader was called
         mock_instance.load.assert_called_once()
         
-        # Assert the dataframe passed to `load()` matches what we wrote to disk
+        # Assert the dataframe passed to `load()` matches and inferred the right table name
         df_passed = mock_instance.load.call_args[0][0]
         assert len(df_passed) == len(mock_weather_df)
-        assert mock_instance.load.call_args[1]["table_name"] == "target_table"
+        assert mock_instance.load.call_args[1]["table_name"] == "weather"
 
     def test_load_to_database_file_not_found(self, tmp_path):
         """Behavior: Crashes fast with FileNotFoundError if extraction hasn't run."""
-        missing_file = tmp_path / "does_not_exist.parquet"
+        missing_dir = tmp_path / "does_not_exist"
         
         with pytest.raises(FileNotFoundError, match="does not exist"):
-            load_to_database(missing_file, "target_table")
+            load_to_database(missing_dir)
 
 
 # ==========================================
@@ -192,6 +192,6 @@ class TestMainOrchestration:
         mock_extract.assert_called_once()
         mock_load.assert_called_once()
         
-        # Verify they were called with the correct temporary paths
-        assert mock_extract.call_args[0][0].parent == temp_dirs["interim"]
-        assert mock_load.call_args[0][0].parent == temp_dirs["interim"]
+        # We check equality instead of checking the `.parent`
+        assert mock_extract.call_args[0][0] == temp_dirs["interim"]
+        assert mock_load.call_args[0][0] == temp_dirs["interim"]
