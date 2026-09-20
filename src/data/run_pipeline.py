@@ -5,22 +5,13 @@ from pathlib import Path
 from typing import List
 import pandas as pd
 
+from src.config import config
 from src.data.extractors import EnergyChartsClient, OpenMeteoClient
 from src.data.loaders import PostgresLoader
 from src.data.transformers import EnergyDataTransformer, WeatherDataTransformer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("Pipeline")
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-RAW_DIR = PROJECT_ROOT / "data" / "01_raw"
-INTERIM_DIR = PROJECT_ROOT / "data" / "02_interim"
-PROCESSED_DIR = PROJECT_ROOT / "data" / "03_processed"
-
-ANCHOR_LATS = [51.55, 51.25, 50.85, 50.25]
-ANCHOR_LONS = [2.90, 3.20, 4.35, 5.50]
-LOCATION_TAGS = ["north_sea", "coast", "flanders", "wallonia"]
-
 
 # ---------------------------------------------------------------------------
 # Core Pipeline Steps
@@ -65,8 +56,8 @@ def extract_and_transform_forecast(output_dir: Path, forecast_days: int) -> None
     logger.info(f"=== Extraction Phase: {forecast_days}-Day Forecast ===")
 
     with OpenMeteoClient() as client:
-        raw_forecast = client.fetch_forecast_weather(ANCHOR_LATS, ANCHOR_LONS, forecast_days=forecast_days)
-        forecast_df = WeatherDataTransformer.transform(raw_forecast, LOCATION_TAGS)
+        raw_forecast = client.fetch_forecast_weather(config.anchor_lats, config.anchor_lons, forecast_days=forecast_days)
+        forecast_df = WeatherDataTransformer.transform(raw_forecast, config.location_tags)
 
     output_file = output_dir / "forecast.parquet"
     forecast_df.to_parquet(output_file, index=False)
@@ -104,7 +95,7 @@ def _extract_weather_data(client: OpenMeteoClient, start_date: str, end_date: st
     start_dt, end_dt = pd.to_datetime(start_date), pd.to_datetime(end_date)
     current = start_dt
 
-    chunk_dir = RAW_DIR / "weather_chunks"
+    chunk_dir = config.raw_dir / "weather_chunks"
     chunk_dir.mkdir(parents=True, exist_ok=True)
 
     while current < end_dt:
@@ -116,11 +107,11 @@ def _extract_weather_data(client: OpenMeteoClient, start_date: str, end_date: st
             df_chunk = pd.read_parquet(chunk_file)
         else:
             raw_chunk = client.fetch_historical_weather(
-                ANCHOR_LATS, ANCHOR_LONS, 
+                config.anchor_lats, config.anchor_lons, 
                 current.strftime("%Y-%m-%d"), 
                 nxt.strftime("%Y-%m-%d")
             )
-            df_chunk = WeatherDataTransformer.transform(raw_chunk, LOCATION_TAGS)
+            df_chunk = WeatherDataTransformer.transform(raw_chunk, config.location_tags)
             
             if not df_chunk.empty:
                 df_chunk.to_parquet(chunk_file, index=False)
@@ -145,11 +136,11 @@ def _extract_energy_production_data(client: EnergyChartsClient, start_date: str,
     start_dt, end_dt = pd.to_datetime(start_date), pd.to_datetime(end_date)
     current = start_dt
 
-    chunk_dir = RAW_DIR / "energy_chunks"
+    chunk_dir = config.raw_dir / "energy_chunks"
     chunk_dir.mkdir(parents=True, exist_ok=True)
 
     while current < end_dt:
-        nxt = min(current + pd.DateOffset(years=1), end_dt)  # Changed to years=1
+        nxt = min(current + pd.DateOffset(years=1), end_dt)
         chunk_file = chunk_dir / f"energy_prod_{current.strftime('%Y%m%d')}_{nxt.strftime('%Y%m%d')}.parquet"
 
         if chunk_file.exists():
@@ -219,13 +210,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     # 1. Initialize Infrastructure
-    for directory in [RAW_DIR, INTERIM_DIR, PROCESSED_DIR]:
+    for directory in [config.raw_dir, config.interim_dir, config.processed_dir]:
         directory.mkdir(parents=True, exist_ok=True)
 
     args = parse_args()
     
     # 2. Configure Paths & Validate
-    target_dir = PROCESSED_DIR if args.mode == "train" else INTERIM_DIR
+    target_dir = config.processed_dir if args.mode == "train" else config.interim_dir
 
     if args.mode == "train" and args.step in ["extract", "run-all"]:
         if not args.start or not args.end:
