@@ -1,5 +1,6 @@
 import argparse
 import logging
+import time
 from pathlib import Path
 from typing import List
 import pandas as pd
@@ -26,33 +27,37 @@ LOCATION_TAGS = ["north_sea", "coast", "flanders", "wallonia"]
 # ---------------------------------------------------------------------------
 
 def extract_and_transform_historical(start_date: str, end_date: str, output_dir: Path) -> None:
-    """Extracts historical data from APIs, transforms it, and stages it locally."""
     logger.info(f"=== Extraction Phase: Historical Data ({start_date} to {end_date}) ===")
 
-    with OpenMeteoClient() as weather_client:
-        weather_df = _extract_weather_data(weather_client, start_date, end_date)
+    # 1. Weather Data
+    try:
+        with OpenMeteoClient() as weather_client:
+            weather_df = _extract_weather_data(weather_client, start_date, end_date)
+            
+        if weather_df.empty:
+            logger.error("Weather extraction yielded empty data.")
+        else:
+            weather_df.to_parquet(output_dir / "weather.parquet", index=False)
+            logger.info("Staged historical weather dataset.")
+            
+    except Exception as e:
+        logger.error(f"Failed to extract weather data: {e}")
 
-    if weather_df.empty or "timestamp" not in weather_df.columns:
-        raise RuntimeError("Weather data extraction failed. The resulting dataset is empty.")
+    # 2. Energy Data
+    try:
+        with EnergyChartsClient() as energy_client:
+            energy_production_df = _extract_energy_production_data(energy_client, start_date, end_date)
+            installed_energy_df = _extract_installed_energy_data(energy_client)
 
-    weather_df.to_parquet(output_dir / "weather.parquet", index=False)
-    logger.info(f"Staged historical dataset ({len(weather_df)} rows) to {output_dir / 'weather.parquet'}")
-    
-    with EnergyChartsClient() as energy_client:
-        energy_production_df = _extract_energy_production_data(energy_client, start_date, end_date)
-        installed_energy_df = _extract_installed_energy_data(energy_client, start_date, end_date)
-
-    if energy_production_df.empty or "timestamp" not in energy_production_df.columns:
-        raise RuntimeError("Energy production data extraction failed. The resulting dataset is empty.")
-
-    if installed_energy_df.empty or "timestamp" not in installed_energy_df.columns:
-        raise RuntimeError("Installed energy data extraction failed. The resulting dataset is empty.")
-
-    energy_production_df.to_parquet(output_dir / "energy_production.parquet", index=False)
-    logger.info(f"Staged energy production dataset ({len(energy_production_df)} rows) to {output_dir / 'energy_production.parquet'}")
-
-    installed_energy_df.to_parquet(output_dir / "installed_energy.parquet", index=False)
-    logger.info(f"Staged installed energy dataset ({len(installed_energy_df)} rows) to {output_dir / 'installed_energy.parquet'}")
+        if not energy_production_df.empty:
+            energy_production_df.to_parquet(output_dir / "energy_production.parquet", index=False)
+        if not installed_energy_df.empty:
+            installed_energy_df.to_parquet(output_dir / "installed_energy.parquet", index=False)
+            
+        logger.info("Staged energy datasets.")
+        
+    except Exception as e:
+        logger.error(f"Failed to extract energy data: {e}")
 
 
 def extract_and_transform_forecast(output_dir: Path, forecast_days: int) -> None:
@@ -63,8 +68,9 @@ def extract_and_transform_forecast(output_dir: Path, forecast_days: int) -> None
         raw_forecast = client.fetch_forecast_weather(ANCHOR_LATS, ANCHOR_LONS, forecast_days=forecast_days)
         forecast_df = WeatherDataTransformer.transform(raw_forecast, LOCATION_TAGS)
 
-    forecast_df.to_parquet(output_dir / "forecast.parquet", index=False)
-    logger.info(f"Staged forecast dataset ({len(forecast_df)} rows) to {output_dir / 'forecast.parquet'}")
+    output_file = output_dir / "forecast.parquet"
+    forecast_df.to_parquet(output_file, index=False)
+    logger.info(f"Staged forecast dataset ({len(forecast_df)} rows) to {output_file}")
 
 
 def load_to_database(directory_path: Path) -> None:
@@ -98,13 +104,36 @@ def _extract_weather_data(client: OpenMeteoClient, start_date: str, end_date: st
     start_dt, end_dt = pd.to_datetime(start_date), pd.to_datetime(end_date)
     current = start_dt
 
+    chunk_dir = RAW_DIR / "weather_chunks"
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+
     while current < end_dt:
-        nxt = min(current + pd.DateOffset(years=1), end_dt)
-        raw_chunk = client.fetch_historical_weather(ANCHOR_LATS, ANCHOR_LONS, current.strftime("%Y-%m-%d"), nxt.strftime("%Y-%m-%d"))
-        df_chunk = WeatherDataTransformer.transform(raw_chunk, LOCATION_TAGS)
+        nxt = min(current + pd.DateOffset(years=1), end_dt) 
+        chunk_file = chunk_dir / f"weather_{current.strftime('%Y%m%d')}_{nxt.strftime('%Y%m%d')}.parquet"
+
+        if chunk_file.exists():
+            logger.info(f"Loading cached chunk: {chunk_file.name}")
+            df_chunk = pd.read_parquet(chunk_file)
+        else:
+            raw_chunk = client.fetch_historical_weather(
+                ANCHOR_LATS, ANCHOR_LONS, 
+                current.strftime("%Y-%m-%d"), 
+                nxt.strftime("%Y-%m-%d")
+            )
+            df_chunk = WeatherDataTransformer.transform(raw_chunk, LOCATION_TAGS)
+            
+            if not df_chunk.empty:
+                df_chunk.to_parquet(chunk_file, index=False)
+            
+            if current < end_dt:
+                time.sleep(1.5)
+
         if not df_chunk.empty:
             chunks.append(df_chunk)
         current = nxt
+
+    if not chunks:
+        return pd.DataFrame()
 
     weather_df = pd.concat(chunks, ignore_index=True).drop_duplicates(subset=["timestamp"])
     weather_df = weather_df.set_index("timestamp").resample("1h").mean().reset_index()
@@ -116,24 +145,44 @@ def _extract_energy_production_data(client: EnergyChartsClient, start_date: str,
     start_dt, end_dt = pd.to_datetime(start_date), pd.to_datetime(end_date)
     current = start_dt
 
+    chunk_dir = RAW_DIR / "energy_chunks"
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+
     while current < end_dt:
-        nxt = min(current + pd.DateOffset(years=1), end_dt)
-        raw_chunk = client.fetch_renewable_power_generation_data(
-            country="be",
-            start=current.strftime("%Y-%m-%d"),
-            end=nxt.strftime("%Y-%m-%d"),
-        )
-        df_chunk = EnergyDataTransformer.transform(raw_chunk)
+        nxt = min(current + pd.DateOffset(years=1), end_dt)  # Changed to years=1
+        chunk_file = chunk_dir / f"energy_prod_{current.strftime('%Y%m%d')}_{nxt.strftime('%Y%m%d')}.parquet"
+
+        if chunk_file.exists():
+            logger.info(f"Loading cached chunk: {chunk_file.name}")
+            df_chunk = pd.read_parquet(chunk_file)
+        else:
+            raw_chunk = client.fetch_renewable_power_generation_data(
+                country="be",
+                start=current.strftime("%Y-%m-%d"),
+                end=nxt.strftime("%Y-%m-%d"),
+            )
+            df_chunk = EnergyDataTransformer.transform(raw_chunk)
+            
+            if not df_chunk.empty:
+                df_chunk.to_parquet(chunk_file, index=False)
+            
+            if current < end_dt:
+                time.sleep(1.5)
+
         if not df_chunk.empty:
             chunks.append(df_chunk)
+            
         current = nxt
+
+    if not chunks:
+        return pd.DataFrame()
 
     energy_production_df = pd.concat(chunks, ignore_index=True).drop_duplicates(subset=["timestamp"])
     energy_production_df = energy_production_df.set_index("timestamp").resample("1h").mean().reset_index()
 
     return energy_production_df
 
-def _extract_installed_energy_data(client: EnergyChartsClient, start_date: str, end_date: str) -> pd.DataFrame:
+def _extract_installed_energy_data(client: EnergyChartsClient) -> pd.DataFrame:
     raw_data = client.fetch_installed_power(country="be", time_step="yearly")
     installed_energy_df = EnergyDataTransformer.transform(raw_data)
     return installed_energy_df
@@ -190,7 +239,6 @@ def main() -> None:
             extract_and_transform_forecast(target_dir, forecast_days=args.forecast_days)
 
     if args.step in ["load", "run-all"]:
-        # Passes the directory; load_to_database will loop through all .parquet files inside
         load_to_database(target_dir)
 
 
