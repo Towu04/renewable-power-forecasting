@@ -25,7 +25,7 @@ class EnergyChartsClient:
         self.session = requests.Session()
         retries = Retry(
             total=3,
-            backoff_factor=1,
+            backoff_factor=5,
             status_forcelist=[429, 500, 502, 503, 504],
             respect_retry_after_header=True 
         )
@@ -57,12 +57,16 @@ class EnergyChartsClient:
         
         raw_params = {"country": country, "start": start, "end": end, "subtype": subtype}
         params = {k: v for k, v in raw_params.items() if v}
-        
+
+        url = f"{self.BASE_URL}{endpoint}"
+        logger.info(f"Requesting data from {start} to {end} from {url}")
+
         return self._make_api_request(endpoint, params)
 
     def fetch_installed_power(self, country: str = "be", time_step: str = "yearly") -> Dict[str, Any]:
         """Fetches installed power capacity data and returns raw JSON."""
         params = {"country": country, "time_step": time_step}
+        logger.info(f"Requesting installed power data for {country} with time step {time_step}")
         return self._make_api_request("/v2/installed_power", params)
 
     def _validate_params(self, endpoint: str, params: Dict[str, Any]) -> None:
@@ -106,8 +110,7 @@ class EnergyChartsClient:
             self._validate_params(endpoint, params)
         
         url = f"{self.BASE_URL}{endpoint}"
-        logger.info(f"EnergyCharts: Requesting data from {url}")
-        
+
         try:
             response = self.session.get(url, params=params, timeout=self.DEFAULT_TIMEOUT)
             response.raise_for_status()

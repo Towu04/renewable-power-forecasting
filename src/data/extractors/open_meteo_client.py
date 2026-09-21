@@ -21,7 +21,7 @@ class OpenMeteoClient:
 
     FORECAST_BASE_URL = "https://api.open-meteo.com"
     ARCHIVE_BASE_URL = "https://archive-api.open-meteo.com"
-    DEFAULT_TIMEOUT = 15
+    DEFAULT_TIMEOUT = 60
 
     DEFAULT_HOURLY_VARIABLES: List[str] = [
         # --- Solar Features ---
@@ -43,7 +43,7 @@ class OpenMeteoClient:
         self.session = requests.Session()
         retries = Retry(
             total=3,
-            backoff_factor=1,
+            backoff_factor=5,
             status_forcelist=[429, 500, 502, 503, 504],
             respect_retry_after_header=True
         )
@@ -104,6 +104,9 @@ class OpenMeteoClient:
             "timezone": "UTC"
         }
 
+        url = f"{self.ARCHIVE_BASE_URL}{"/v1/archive"}"        
+        logger.info(f"Requesting data from {start_date} to {end_date} from {url}")
+
         data = self._make_api_request(self.ARCHIVE_BASE_URL, "/v1/archive", params)
         return data if isinstance(data, list) else [data]
 
@@ -132,9 +135,7 @@ class OpenMeteoClient:
         return data if isinstance(data, list) else [data]
 
     def _make_api_request(self, base_url: str, endpoint: str, params: Dict[str, Any]) -> Any:
-        url = f"{base_url}{endpoint}"
-        logger.info(f"OpenMeteo: Requesting data from {url}")
-        
+        url = f"{base_url}{endpoint}"        
         try:
             response = self.session.get(url, params=params, timeout=self.DEFAULT_TIMEOUT)
             response.raise_for_status()

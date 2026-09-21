@@ -1,9 +1,9 @@
-START_DATE ?= 2025-01-01
-END_DATE ?= 2026-01-01
+START_DATE ?= 2014-01-01
+END_DATE ?= 2025-01-01
 FORECAST_DAYS ?= 3
 MODULE ?= src.data.run_pipeline
 
-.PHONY: setup clean train inference test extract-train load-train extract-inference load-inference
+.PHONY: setup clean train inference test extract-train build-features load-train extract-inference load-inference
 
 setup:
 	pip install --upgrade pip
@@ -18,22 +18,28 @@ clean:
 # --- Combined Pipeline Commands ---
 
 train:
-	@echo "Starting full historical data pipeline (Extract & Load)..."
+	@echo "Starting full historical data pipeline (Extract -> Build Features -> Load)..."
 	python -m $(MODULE) --mode train --step run-all --start $(START_DATE) --end $(END_DATE)
 
 inference:
 	@echo "Fetching $(FORECAST_DAYS)-day forecast for ML inference..."
 	python -m $(MODULE) --mode inference --step run-all --forecast-days $(FORECAST_DAYS)
 
-# --- Decoupled Commands ---
+# --- Decoupled Commands (Medallion Architecture) ---
 
 extract-train:
-	@echo "Extracting historical data only..."
+	@echo "Extracting historical data to Raw/Interim..."
 	python -m $(MODULE) --mode train --step extract --start $(START_DATE) --end $(END_DATE)
 
+build-features:
+	@echo "Building ML features (Interim -> Processed)..."
+	python -m $(MODULE) --mode train --step build-features
+
 load-train:
-	@echo "Loading staged historical data to Postgres..."
+	@echo "Loading Processed historical data to Postgres..."
 	python -m $(MODULE) --mode train --step load
+
+# --- Inference ---
 
 extract-inference:
 	@echo "Extracting $(FORECAST_DAYS)-day forecast only..."
